@@ -14,8 +14,18 @@ public class DrawableCompatHelper {
     public static int[] getColors(GradientDrawable drawable) {
         if (drawable == null)
             return new int[]{};
+        int[] colors=null;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            return drawable.getColors();
+            //获取渐变颜色
+             colors = drawable.getColors();
+            if (colors != null) {
+                return colors;
+            } else if (drawable.getColor() != null) {
+                //如果没有渐变颜色，获取填充颜色
+                int solid = drawable.getColor().getDefaultColor();
+                return new int[]{solid, solid};
+            }
+            return null;
         } else {
             try {
                 Field field = GradientDrawable.class.getDeclaredField("mGradientState");

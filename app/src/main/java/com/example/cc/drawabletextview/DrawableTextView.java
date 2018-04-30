@@ -5,7 +5,6 @@ import android.content.res.TypedArray;
 import android.graphics.BitmapShader;
 import android.graphics.Color;
 import android.graphics.LinearGradient;
-import android.graphics.Rect;
 import android.graphics.RectF;
 import android.graphics.Shader;
 import android.graphics.drawable.BitmapDrawable;
@@ -16,6 +15,8 @@ import android.graphics.drawable.StateListDrawable;
 import android.util.AttributeSet;
 import android.util.Log;
 import android.util.SparseArray;
+import android.view.ViewGroup;
+import android.view.ViewTreeObserver;
 
 
 import java.util.Arrays;
@@ -46,10 +47,11 @@ public class DrawableTextView extends android.support.v7.widget.AppCompatTextVie
     /**
      * 缓存shader，避免在列表中使用时创建大量对象。
      */
-    private HashMap<String, Shader> mShaderHashMap = new HashMap<>();
+    private HashMap<String, ViewState> mShaderHashMap = new HashMap<>();
 
     public DrawableTextView(Context context) {
         super(context);
+        setLayoutParams(new ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
     }
 
     public DrawableTextView(Context context, AttributeSet attrs) {
@@ -62,20 +64,18 @@ public class DrawableTextView extends android.support.v7.widget.AppCompatTextVie
     }
 
     @Override
-    protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-        super.onMeasure(widthMeasureSpec, heightMeasureSpec);
-        if (getMeasuredWidth() != 0 && !inflated) {
-            resetColorState();
-            inflated = true;
-        }
+    public void setText(CharSequence text, BufferType type) {
+        super.setText(text, type);
+        post(refreshRunnable);
     }
 
     @Override
-    protected void onFocusChanged(boolean focused, int direction, Rect previouslyFocusedRect) {
-        boolean isFocused = isFocused();
-        super.onFocusChanged(focused, direction, previouslyFocusedRect);
-        if (isFocused != focused)
+    protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+        super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+        if (getMeasuredWidth() != 0 && !inflated && textColorDrawable != null) {
             resetColorState();
+            inflated = true;
+        }
     }
 
     /**
@@ -83,19 +83,29 @@ public class DrawableTextView extends android.support.v7.widget.AppCompatTextVie
      *
      * @param textColorDrawable
      */
-    public void setTextColorDrawable(Drawable textColorDrawable) {
+    public void setTextDrawable(Drawable textColorDrawable) {
         this.textColorDrawable = textColorDrawable;
         mShaderHashMap.clear();
-        setTextDrawable(textColorDrawable);
+        setTextDrawableInner(textColorDrawable);
     }
 
-    private void setTextDrawable(Drawable drawable) {
+    private Runnable refreshRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (textColorDrawable != null) {
+                if (textColorDrawable instanceof GradientDrawable || textColorDrawable instanceof StateListDrawable)
+                    resetColorState();
+            }
+        }
+    };
+
+    private void setTextDrawableInner(Drawable drawable) {
         textColorDrawable = drawable;
         Shader shader = null;
         if (textColorDrawable instanceof StateListDrawable) {
             textColorDrawable.setState(getDrawableState());
             Drawable curDrawable = textColorDrawable.getCurrent();
-            shader = mShaderHashMap.get(curDrawable.getClass().getName());
+            shader = getCachedShader();
             if (shader != null) {
                 setTextColor(Color.BLACK);
                 getPaint().setShader(shader);
@@ -109,24 +119,55 @@ public class DrawableTextView extends android.support.v7.widget.AppCompatTextVie
                 setGradientColor((GradientDrawable) curDrawable);
             } else if (curDrawable instanceof BitmapDrawable) {
                 setTextColor(Color.BLACK);
-                getPaint().setShader(shader = new BitmapShader(((BitmapDrawable) curDrawable).getBitmap(), Shader.TileMode.CLAMP, Shader.TileMode.CLAMP));
-                mShaderHashMap.put(curDrawable.getClass().getName(), shader);
+                getPaint().setShader(shader = setBitmapDrawable((BitmapDrawable) curDrawable));
+                ViewState viewState = new ViewState(shader, getMeasuredWidth());
+                mShaderHashMap.put(curDrawable.getClass().getName(), viewState);
             }
         } else if (textColorDrawable instanceof GradientDrawable) {
             setTextColor(Color.BLACK);
-            shader = mShaderHashMap.get(textColorDrawable.getClass().getName());
+            shader = getCachedShader();
             if (shader != null) {
                 getPaint().setShader(shader);
                 return;
             }
             setGradientColor((GradientDrawable) textColorDrawable);
+        } else if (textColorDrawable instanceof BitmapDrawable) {
+            shader = setBitmapDrawable((BitmapDrawable) textColorDrawable);
+            mShaderHashMap.put(textColorDrawable.getClass().getName(), new ViewState(shader, getMeasuredWidth()));
         }
     }
 
-    private void resetColorState() {
-        setTextDrawable(textColorDrawable);
+    private Shader getCachedShader() {
+        ViewState viewState = mShaderHashMap.get(textColorDrawable.getClass().getName());
+        if (textColorDrawable != null && viewState != null) {
+            return viewState.getShader(getMeasuredWidth());
+        }
+        return null;
     }
 
+    private void resetColorState() {
+        setTextDrawableInner(textColorDrawable);
+    }
+
+    /**
+     * 设置BitmapShader
+     *
+     * @param bitmapDrawable
+     * @return
+     */
+    private Shader setBitmapDrawable(BitmapDrawable bitmapDrawable) {
+        Shader shader = null;
+        setTextColor(Color.BLACK);
+        getPaint().setShader(shader = new BitmapShader((bitmapDrawable).getBitmap(),
+                Shader.TileMode.CLAMP, Shader.TileMode.CLAMP));
+        return shader;
+    }
+
+    /**
+     * 设置 LinearGradient Shader
+     *
+     * @param drawable
+     */
     private void setGradientColor(GradientDrawable drawable) {
         int[] colors = DrawableCompatHelper.getColors(drawable);
         Log.d(TAG, "colors:" + Arrays.toString(colors) + ",width:" + getMeasuredWidth());
@@ -135,14 +176,14 @@ public class DrawableTextView extends android.support.v7.widget.AppCompatTextVie
             measure(a, a);
         }
         Shader shader = null;
-        if (colors != null && colors.length > 0) {
+        if (getMeasuredWidth() != 0 && colors != null && colors.length > 0) {
             if (colors.length == 1) {
                 colors = new int[]{colors[0], colors[0]};
             }
             getPaint().setShader(shader = new LinearGradient(0, 0, getMeasuredWidth(), 0,
                     colors, DrawableCompatHelper.getPositions(drawable,
                     colors.length == 3), Shader.TileMode.CLAMP));
-            mShaderHashMap.put(drawable.getClass().getName(), shader);
+            mShaderHashMap.put(drawable.getClass().getName(), new ViewState(shader, getMeasuredWidth()));
         }
     }
 
@@ -160,6 +201,22 @@ public class DrawableTextView extends android.support.v7.widget.AppCompatTextVie
         super.setSelected(selected);
         if (isSelected != selected)
             resetColorState();
+    }
+
+    private final class ViewState {
+        Shader shader;
+        int initWidth;
+
+        public Shader getShader(int width) {
+            if (width != initWidth)
+                return null;
+            return shader;
+        }
+
+        public ViewState(Shader shader, int layoutChanted) {
+            this.shader = shader;
+            this.initWidth = layoutChanted;
+        }
     }
 
 }
