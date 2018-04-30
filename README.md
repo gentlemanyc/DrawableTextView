@@ -1,0 +1,2 @@
+# DrawableTextView
+Android 支持文字使用Drawable填充的TextView
