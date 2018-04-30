@@ -13,4 +13,4 @@ Android 支持文字使用Drawable填充的TextView
 ```
 ## 截图
 
-![](https://github.com/gentlemanyc/DrawableTextView/blob/master/device-2018-04-30-235536.png '描述')
+<img src="https://github.com/gentlemanyc/DrawableTextView/blob/master/device-2018-04-30-235536.png" width="50%" height="50%" />
